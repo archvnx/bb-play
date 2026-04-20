@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "bbplay-app",
+    "slug": "bbplay-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "bbplayapp",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.archvnx.bbplayapp"
+    },
+    "web": {
+      "output": "single"
+    },
+    "experiments": {
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a69970e1-31e8-4dac-8c0e-405ed85e4c02"
+      }
+    }
+  }
+}
