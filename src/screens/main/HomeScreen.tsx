@@ -100,10 +100,10 @@ export default function HomeScreen() {
   const loadOffers = async (club: Club) => {
     setOffersLoading(true);
     try {
-      const result = await fetchSpecialOffers(club.icafe_id);
-      setOffers(result);
-    } catch {
-      setOffers([]);
+          const result = await fetchSpecialOffers(club.icafe_id);
+              setOffers(result);
+    } catch (e: any) {
+          setOffers([]);
     } finally {
       setOffersLoading(false);
     }

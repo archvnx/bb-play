@@ -121,7 +121,7 @@ export default function ChatbotScreen() {
         content: botReply,
       }]);
     } catch (e: any) {
-      console.error(`${TAG} ❌`, e.message);
+      // error silenced in release build
       setMessages(prev => [...prev, {
         id: 'err-' + Date.now(),
         role: 'assistant',

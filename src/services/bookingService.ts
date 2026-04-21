@@ -21,7 +21,7 @@ import { parseDurationFromName, parseName, parseZone } from '../utils/bookingUti
 // ─── Клубы ────────────────────────────────────────────────────────────────────
 export const fetchClubsForBooking = async (): Promise<CafeBooking[]> => {
   const data = await get<CafeBooking[]>('/cafes');
-  const raw = Array.isArray(data) ? data : [];
+  const raw  = Array.isArray(data) ? data : [];
   return raw.map(c => ({ address: c.address, icafe_id: String(c.icafe_id) }));
 };
 
@@ -31,29 +31,32 @@ export const fetchPrices = async (cafeId: string | number, memberId: string): Pr
   return Array.isArray(data?.prices) ? data.prices : [];
 };
 
-// ─── Продукты ─────────────────────────────────────────────────────────────────
+// ─── Продукты (внутренняя функция) ────────────────────────────────────────────
 const extractProducts = (data: unknown): ProductFromApi[] => {
   if (Array.isArray(data)) return data as ProductFromApi[];
-  const d = data as Record<string, unknown>;
+  const d     = data as Record<string, unknown>;
   const items = d?.items ?? d?.products ?? d?.data;
   return Array.isArray(items) ? (items as ProductFromApi[]) : [];
 };
 
-/** Пакеты для экрана бронирования (шаг «параметры») */
-export const fetchServerPackages = async (cafeId: string | number): Promise<ServerPackage[]> => {
-  const data = await get<unknown>(`/api/v2/cafe/${cafeId}/products`);
-  const raw  = extractProducts(data);
-
-  const seen = new Set<string>();
-  const unique = raw.filter(p => {
+/** Загружает сырые продукты для клуба, дедуплицируя по product_id */
+const fetchRawProducts = async (cafeId: string | number): Promise<ProductFromApi[]> => {
+  const data   = await get<unknown>(`/api/v2/cafe/${cafeId}/products`);
+  const raw    = extractProducts(data);
+  const seen   = new Set<string>();
+  return raw.filter(p => {
     const id = String(p.product_id);
     if (seen.has(id)) return false;
     seen.add(id);
     return true;
-  });
+  }).filter(p => p.product_enable_client !== 0);
+};
+
+/** Пакеты для экрана бронирования (шаг «параметры») */
+export const fetchServerPackages = async (cafeId: string | number): Promise<ServerPackage[]> => {
+  const unique = await fetchRawProducts(cafeId);
 
   const parsed: ServerPackage[] = unique
-    .filter(p => p.product_enable_client !== 0)
     .map(p => {
       const label        = parseName(p.product_name ?? '');
       const zone         = parseZone(p.product_name ?? '');
@@ -71,19 +74,9 @@ export const fetchServerPackages = async (cafeId: string | number): Promise<Serv
 
 /** Спецпредложения для главного экрана */
 export const fetchSpecialOffers = async (cafeId: string | number): Promise<SpecialOffer[]> => {
-  const data = await get<unknown>(`/api/v2/cafe/${cafeId}/products`);
-  const raw  = extractProducts(data);
-
-  const seen = new Set<string>();
-  const unique = raw.filter(p => {
-    const id = String(p.product_id);
-    if (seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
+  const unique = await fetchRawProducts(cafeId);
 
   return unique
-    .filter(p => p.product_enable_client !== 0)
     .map((p, idx) => {
       const rawName      = p.product_name ?? '';
       const name         = parseName(rawName);
@@ -110,11 +103,10 @@ export const fetchRooms = async (cafeId: string | number): Promise<RoomFromApi[]
   return Array.isArray(data?.rooms) ? data.rooms : [];
 };
 
-/** Данные для отрисовки карты зала */
 export const fetchMapData = async (
   cafeId: string | number,
 ): Promise<{ areas: MapArea[]; pcs: MapPC[] }> => {
-  const rooms      = await fetchRooms(cafeId);
+  const rooms       = await fetchRooms(cafeId);
   const PC_BOX_SIZE = 50;
 
   const areas: MapArea[] = rooms.map(r => ({
@@ -153,21 +145,27 @@ export const fetchAvailablePcs = async (
   date: string,
   time: string,
   mins: number,
+  priceName?: string,
 ): Promise<PC[]> => {
-  const data = await get<AvailablePcsResponse>('/available-pcs-for-booking', {
-    cafeId, dateStart: date, timeStart: time, mins, isFindWindow: true,
-  });
+  const params: Record<string, unknown> = {
+    cafeId,
+    dateStart:    date,
+    timeStart:    time,
+    mins,
+    isFindWindow: true,
+  };
+  if (priceName) params.priceName = priceName;
+  const data = await get<AvailablePcsResponse>('/available-pcs-for-booking', params);
   return Array.isArray(data?.pc_list) ? data.pc_list : [];
 };
 
 // ─── Создание брони ───────────────────────────────────────────────────────────
-export const createBooking = async (payload: BookingPayload): Promise<BookingResult> => {
-  return post<BookingResult>('/booking', payload);
-};
+export const createBooking = async (payload: BookingPayload): Promise<BookingResult> =>
+  post<BookingResult>('/booking', payload as unknown as Record<string, unknown>);
 
 // ─── Активные брони ───────────────────────────────────────────────────────────
 export const getActiveBookings = async (memberAccount: string): Promise<ActiveBooking[]> => {
-  const data = await get<unknown>('/all-books-cafes');
+  const data = await get<unknown>('/all-books-cafes', { memberAccount });
 
   const all: ActiveBooking[] = [];
   if (data && typeof data === 'object' && !Array.isArray(data)) {
@@ -180,7 +178,6 @@ export const getActiveBookings = async (memberAccount: string): Promise<ActiveBo
 
   const now = new Date();
   return all.filter(b => {
-    if (b.member_account !== memberAccount) return false;
     const end = b.product_available_date_local_to
       ? new Date(b.product_available_date_local_to.replace(' ', 'T'))
       : null;

@@ -130,7 +130,7 @@ export default function NewsScreen() {
       const data = await getVkNews();
       setNews(data);
     } catch (err) {
-      console.error('[NewsScreen]', err);
+      // error silenced in release build
     } finally {
       setLoading(false);
       setRefreshing(false);

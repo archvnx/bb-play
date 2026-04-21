@@ -5,8 +5,7 @@ export const API_BASE_URL: string = process.env.EXPO_PUBLIC_API_VIBE ?? '';
 /** Базовый URL бэкенда новостей/VK */
 export const NEWS_BASE_URL: string = process.env.EXPO_PUBLIC_BACKEND_URL ?? '';
 
-if (__DEV__ && !API_BASE_URL)  console.warn('[config] EXPO_PUBLIC_API_VIBE не задан');
-if (__DEV__ && !NEWS_BASE_URL) console.warn('[config] EXPO_PUBLIC_BACKEND_URL не задан');
+
 
 // ─── VK ───────────────────────────────────────────────────────────────────────
 /** ID группы ВКонтакте — используется для формирования ссылок на посты */
@@ -42,3 +41,4 @@ export const HOME_ZONE_STYLES: Record<string, { accent: string }> = {
   VP:      { accent: '#ffffff' },
   default: { accent: '#FFCC00' },
 };
+

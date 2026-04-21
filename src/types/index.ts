@@ -47,6 +47,7 @@ export interface Price {
 
 export interface PricesResponse {
   prices: Price[];
+  products: ProductFromApi[];
 }
 
 // ─── Карта зала ───────────────────────────────────────────────────────────────

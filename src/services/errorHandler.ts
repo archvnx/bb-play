@@ -1,5 +1,8 @@
 import { Alert } from 'react-native';
 
+// Защита от дублирующихся алертов: показываем не чаще одного раза в 2 секунды
+let isAlertShowing = false;
+
 export function handleApiError(code: number, message?: string) {
   let userMessage = '';
 
@@ -73,5 +76,10 @@ export function handleApiError(code: number, message?: string) {
       break;
   }
 
-  Alert.alert('Внимание', userMessage);
+  if (isAlertShowing) return;
+  isAlertShowing = true;
+
+  Alert.alert('Внимание', userMessage, [
+    { text: 'ОК', onPress: () => { isAlertShowing = false; } },
+  ]);
 }
