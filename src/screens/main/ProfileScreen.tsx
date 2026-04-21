@@ -1,402 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator, Alert, Modal, KeyboardAvoidingView,
-  Platform, Image,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuthStore } from '../../store/useAuthStore';
-import { updateProfile, refreshUser, verifyPassword, topupBalance } from '../../services/authService';
-import { fetchClubs, Club } from '../../services/clubsService';
-import {
-  CameraIcon, EditIcon, WalletIcon, RefreshIcon, LogoutIcon, BookingIcon,
-} from '../../components/ui/Icons';
-import { formatPhone, cleanPhone, isPhoneValid } from '../../utils/phoneFormat';
+import { updateProfile, refreshUser } from '../../services/authService';
+import { fetchClubs } from '../../services/clubsService';
+import { Club } from '../../types';
+import { CameraIcon, WalletIcon, RefreshIcon, LogoutIcon, EditIcon } from '../../components/ui/Icons';
+import { formatPhone } from '../../utils/phoneFormat';
+import { birthdayToDisplay } from '../../utils/profileUtils';
 import * as ImageManipulator from 'expo-image-manipulator';
-// ─── Форматирование даты рождения ─────────────────────────────────────────────
-function formatBirthday(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
-}
-
-function birthdayToServer(display: string): string {
-  const parts = display.split('.');
-  if (parts.length === 3 && parts[2].length === 4) {
-    return `${parts[2]}-${parts[1]}-${parts[0]}`;
-  }
-  return display;
-}
-
-function birthdayToDisplay(server: string): string {
-  if (!server || server === '0000-00-00') return '';
-  const parts = server.split('-');
-  if (parts.length === 3) return `${parts[2]}.${parts[1]}.${parts[0]}`;
-  return server;
-}
-
-// ─── Аватар ───────────────────────────────────────────────────────────────────
-function Avatar({ photo, name }: { photo?: string; name: string }) {
-  const initials = name?.slice(0, 2).toUpperCase() || '??';
-  if (photo && photo.length > 10) {
-    return (
-      <Image
-        source={{ uri: photo }}
-        style={avatarSt.img}
-        key={photo.slice(0, 50)} // форсирует ре-рендер при смене фото
-      />
-    );
-  }
-  return (
-    <View style={avatarSt.wrap}>
-      <Text style={avatarSt.text}>{initials}</Text>
-    </View>
-  );
-}
-const avatarSt = StyleSheet.create({
-  img:  { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: '#FFCC00' },
-  wrap: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#1A1A1A', borderWidth: 3, borderColor: '#FFCC00', justifyContent: 'center', alignItems: 'center' },
-  text: { color: '#FFCC00', fontSize: 32, fontWeight: '900' },
-});
-
-function maskPhone(phone: string): string {
-  if (!phone) return '—';
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length < 4) return phone;
-  return phone.slice(0, 6) + '•'.repeat(Math.max(0, phone.length - 6));
-}
-
-// ─── InfoRow ──────────────────────────────────────────────────────────────────
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={rowSt.row}>
-      <Text style={rowSt.label}>{label}</Text>
-      <Text style={rowSt.value} numberOfLines={1}>{value || '—'}</Text>
-    </View>
-  );
-}
-const rowSt = StyleSheet.create({
-  row:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: '#111' },
-  label: { color: '#555', fontSize: 14, flexShrink: 0 },
-  value: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'right', marginLeft: 16 },
-});
-
-// ─── EditableRow ──────────────────────────────────────────────────────────────
-function EditableRow({ label, displayValue, onPress }: { label: string; displayValue: string; onPress: () => void }) {
-  return (
-    <TouchableOpacity style={rowSt.row} onPress={onPress} activeOpacity={0.7}>
-      <Text style={rowSt.label}>{label}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'flex-end' }}>
-        <Text style={[rowSt.value, { flex: 0, maxWidth: 180 }]} numberOfLines={1}>{displayValue}</Text>
-        <EditIcon size={15} color="#FFCC00" strokeWidth={2} />
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-// ─── EditModal ────────────────────────────────────────────────────────────────
-type EditField = 'first_name' | 'phone' | 'email' | 'password' | 'birthday';
-
-function EditModal({ visible, field, currentValue, username, onClose, onSaved }: any) {
-  const [step, setStep] = useState<'verify' | 'edit'>('verify');
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newValue, setNewValue] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const reset = () => { setStep('verify'); setCurrentPassword(''); setNewValue(''); setError(''); };
-  const handleClose = () => { reset(); onClose(); };
-
-  const handleVerify = async () => {
-    if (!currentPassword.trim()) { setError('Введите текущий пароль'); return; }
-    setLoading(true); setError('');
-    try {
-      const ok = await verifyPassword(username, currentPassword.trim());
-      if (!ok) { setError('Неверный пароль'); return; }
-      if (field === 'birthday') {
-        setNewValue(birthdayToDisplay(currentValue));
-      } else {
-        setNewValue(field === 'phone' ? formatPhone(currentValue) : currentValue);
-      }
-      setStep('edit');
-    } catch {
-      setError('Ошибка проверки. Попробуйте снова.');
-    } finally { setLoading(false); }
-  };
-
-  const handleSave = async () => {
-    if (!field) return;
-    if (!newValue.trim()) { setError('Поле не может быть пустым'); return; }
-    if (field === 'password' && newValue.trim().length < 4) { setError('Пароль минимум 4 символа'); return; }
-    if (field === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newValue.trim())) {
-      setError('Укажите корректный email'); return;
-    }
-    if (field === 'phone' && !isPhoneValid(newValue)) {
-      setError('Введите корректный номер (+7 и 10 цифр)'); return;
-    }
-   if (field === 'birthday') {
-  const digits = newValue.replace(/\D/g, '');
-  if (digits.length !== 8) { setError('Введите полную дату: ДД.ММ.ГГГГ'); return; }
-  
-  const day   = parseInt(digits.slice(0, 2));
-  const month = parseInt(digits.slice(2, 4));
-  const year  = parseInt(digits.slice(4, 8));
-  const currentYear = new Date().getFullYear();
-
-  if (month < 1 || month > 12) { setError('Некорректный месяц'); return; }
-  if (day < 1 || day > 31)     { setError('Некорректный день'); return; }
-  if (year < 1900 || year > currentYear) { 
-    setError(`Год должен быть от 1900 до ${currentYear}`); return; 
-  }
-
-  // Проверка реальной даты
-  const dateObj = new Date(year, month - 1, day);
-  if (
-    dateObj.getFullYear() !== year ||
-    dateObj.getMonth() !== month - 1 ||
-    dateObj.getDate() !== day
-  ) {
-    setError('Такой даты не существует'); return;
-  }
-}
-
-    let valToSend = field === 'phone' ? cleanPhone(newValue) : newValue.trim();
-    if (field === 'birthday') valToSend = birthdayToServer(newValue.trim());
-
-    if (field !== 'password' && field !== 'birthday' && valToSend === cleanPhone(currentValue)) {
-      setError('Новое значение совпадает с текущим'); return;
-    }
-
-    setLoading(true); setError('');
-    try {
-      onSaved(field, valToSend);
-      reset();
-      onClose();
-    } catch (e: any) {
-      setError(e.message || 'Ошибка сохранения');
-    } finally { setLoading(false); }
-  };
-
-  if (!field) return null;
-  const isPassword = field === 'password';
-  const isPhone    = field === 'phone';
-  const isEmail    = field === 'email';
-  const isDate     = field === 'birthday';
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent>
-      <KeyboardAvoidingView style={modalSt.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <TouchableOpacity style={modalSt.backdrop} activeOpacity={1} onPress={handleClose} />
-        <View style={modalSt.sheet}>
-          <View style={modalSt.handle} />
-          {step === 'verify' ? (
-            <>
-              <Text style={modalSt.title}>Подтверждение</Text>
-              <Text style={modalSt.subtitle}>Введите текущий пароль для изменения данных</Text>
-              <TextInput
-                style={[modalSt.input, error ? modalSt.inputError : null]}
-                value={currentPassword}
-                onChangeText={(v) => { setCurrentPassword(v); setError(''); }}
-                secureTextEntry placeholder="Ваш пароль" placeholderTextColor="#333" autoFocus
-              />
-              {error ? <Text style={modalSt.error}>{error}</Text> : null}
-              <View style={modalSt.btnRow}>
-                <TouchableOpacity style={modalSt.cancelBtn} onPress={handleClose}>
-                  <Text style={modalSt.cancelText}>Отмена</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={modalSt.confirmBtn} onPress={handleVerify} disabled={loading}>
-                  {loading ? <ActivityIndicator color="#000" size="small" /> : <Text style={modalSt.confirmText}>Далее</Text>}
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <>
-              <Text style={modalSt.title}>Новое значение</Text>
-              <TextInput
-                style={[modalSt.input, error ? modalSt.inputError : null]}
-                value={newValue}
-                onChangeText={(v) => {
-                  if (isDate) setNewValue(formatBirthday(v));
-                  else setNewValue(isPhone ? formatPhone(v) : v);
-                  setError('');
-                }}
-                maxLength={isPhone ? 18 : isDate ? 10 : 50}
-                secureTextEntry={isPassword}
-                keyboardType={isPhone ? 'phone-pad' : isDate ? 'numeric' : isEmail ? 'email-address' : 'default'}
-                placeholder={isPhone ? '+7 (999) 999-99-99' : isDate ? 'ДД.ММ.ГГГГ' : 'Новое значение'}
-                placeholderTextColor="#333" autoCapitalize="none" autoFocus
-              />
-              {error ? <Text style={modalSt.error}>{error}</Text> : null}
-              <View style={modalSt.btnRow}>
-                <TouchableOpacity style={modalSt.cancelBtn} onPress={handleClose}>
-                  <Text style={modalSt.cancelText}>Отмена</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={modalSt.confirmBtn} onPress={handleSave} disabled={loading}>
-                  {loading ? <ActivityIndicator color="#000" size="small" /> : <Text style={modalSt.confirmText}>Сохранить</Text>}
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-// ─── TopupModal ───────────────────────────────────────────────────────────────
-const TOPUP_AMOUNTS = [100, 200, 300, 500, 1000, 2000];
-
-function TopupModal({ visible, onClose, onSuccess, user }: any) {
-  const [selected, setSelected] = useState<number | null>(null);
-  const [custom, setCustom] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const amount = selected !== null ? selected : (parseInt(custom) || 0);
-
-  const handleTopup = async () => {
-    if (!amount || amount < 10) { setError('Минимальная сумма — 10 ₽'); return; }
-    setLoading(true); setError('');
-    try {
-      const { newBalance, newBonus } = await topupBalance(user, amount);
-      onSuccess(newBalance, newBonus ?? 0);
-      setSelected(null); setCustom(''); onClose();
-    } catch (e: any) {
-      setError(e.message || 'Ошибка пополнения');
-    } finally { setLoading(false); }
-  };
-
-  const handleClose = () => { setSelected(null); setCustom(''); setError(''); onClose(); };
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent>
-      <KeyboardAvoidingView style={modalSt.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <TouchableOpacity style={modalSt.backdrop} activeOpacity={1} onPress={handleClose} />
-        <View style={modalSt.sheet}>
-          <View style={modalSt.handle} />
-          <Text style={modalSt.title}>Пополнение баланса</Text>
-          <Text style={modalSt.subtitle}>Выберите сумму или введите свою</Text>
-          <View style={topupSt.grid}>
-            {TOPUP_AMOUNTS.map((a) => (
-              <TouchableOpacity
-                key={a}
-                style={[topupSt.chip, selected === a && topupSt.chipActive]}
-                onPress={() => { setSelected(a === selected ? null : a); setCustom(''); setError(''); }}
-              >
-                <Text style={[topupSt.chipText, selected === a && topupSt.chipTextActive]}>{a} ₽</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <TextInput
-            style={[modalSt.input, error ? modalSt.inputError : null]}
-            value={custom}
-            onChangeText={(v) => { setCustom(v.replace(/\D/g, '')); setSelected(null); setError(''); }}
-            keyboardType="numeric" placeholder="Сумма в рублях" placeholderTextColor="#333"
-          />
-          {error ? <Text style={modalSt.error}>{error}</Text> : null}
-          <View style={modalSt.btnRow}>
-            <TouchableOpacity style={modalSt.cancelBtn} onPress={handleClose}>
-              <Text style={modalSt.cancelText}>Отмена</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[modalSt.confirmBtn, (!amount || loading) && modalSt.confirmBtnDisabled]}
-              onPress={handleTopup} disabled={loading || !amount}
-            >
-              {loading ? <ActivityIndicator color="#000" /> : <Text style={modalSt.confirmText}>Пополнить</Text>}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-// ─── FavoriteClubModal ────────────────────────────────────────────────────────
-function FavoriteClubModal({ visible, clubs, currentId, onSelect, onClose }: {
-  visible: boolean;
-  clubs: Club[];
-  currentId: string | null;
-  onSelect: (id: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent>
-      <View style={modalSt.overlay}>
-        <TouchableOpacity style={modalSt.backdrop} activeOpacity={1} onPress={onClose} />
-        <View style={modalSt.sheet}>
-          <View style={modalSt.handle} />
-          <Text style={modalSt.title}>Избранный клуб</Text>
-          <Text style={modalSt.subtitle}>Спецпредложения будут загружаться для выбранного клуба</Text>
-          <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 340 }}>
-            {clubs.map((club) => {
-              const isActive = String(club.icafe_id) === currentId;
-              return (
-                <TouchableOpacity
-                  key={club.icafe_id}
-                  style={[clubPickSt.row, isActive && clubPickSt.rowActive]}
-                  onPress={() => { onSelect(String(club.icafe_id)); onClose(); }}
-                  activeOpacity={0.75}
-                >
-                  <View style={clubPickSt.iconWrap}>
-                    <BookingIcon size={16} color={isActive ? '#FFCC00' : '#ffffff'} />
-                  </View>
-                  <Text style={[clubPickSt.address, isActive && clubPickSt.addressActive]} numberOfLines={2}>
-                    {club.address}
-                  </Text>
-                  {isActive && (
-                    <View style={clubPickSt.checkWrap}>
-                      <Text style={clubPickSt.check}>✓</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-const clubPickSt = StyleSheet.create({
-  row:         { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 12, marginBottom: 8, backgroundColor: '#111', borderWidth: 1, borderColor: '#1A1A1A' },
-  rowActive:   { backgroundColor: '#FFCC00', borderColor: '#FFCC00' },
-  iconWrap:    { width: 32, height: 32, borderRadius: 8, backgroundColor: '#1A1100', alignItems: 'center', justifyContent: 'center' },
-  address:     { color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 },
-  addressActive: { color: '#000' },
-  checkWrap:   { width: 24, height: 24, borderRadius: 12, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  check:       { color: '#FFCC00', fontSize: 14, fontWeight: '900' },
-});
-
-// ─── Стили модалок ────────────────────────────────────────────────────────────
-const topupSt = StyleSheet.create({
-  grid:          { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
-  chip:          { paddingVertical: 10, paddingHorizontal: 18, borderRadius: 10, borderWidth: 1, borderColor: '#222', backgroundColor: '#111' },
-  chipActive:    { backgroundColor: '#FFCC00', borderColor: '#FFCC00' },
-  chipText:      { color: '#888', fontSize: 15, fontWeight: '700' },
-  chipTextActive:{ color: '#000' },
-});
-
-const modalSt = StyleSheet.create({
-  overlay:            { flex: 1, justifyContent: 'flex-end' },
-  backdrop:           { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
-  sheet:              { backgroundColor: '#0D0D0D', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, borderTopWidth: 1, borderColor: '#1A1A1A' },
-  handle:             { width: 40, height: 4, backgroundColor: '#222', borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
-  title:              { color: '#fff', fontSize: 20, fontWeight: '900', marginBottom: 6 },
-  subtitle:           { color: '#555', fontSize: 13, marginBottom: 20, lineHeight: 20 },
-  input:              { backgroundColor: '#111', borderWidth: 1, borderColor: '#222', borderRadius: 12, padding: 14, fontSize: 15, color: '#fff', marginBottom: 12 },
-  inputError:         { borderColor: '#FF4444' },
-  error:              { color: '#FF6B6B', fontSize: 13, marginBottom: 12 },
-  btnRow:             { flexDirection: 'row', gap: 10, marginTop: 4 },
-  cancelBtn:          { flex: 1, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#222', alignItems: 'center' },
-  cancelText:         { color: '#666', fontWeight: '600', fontSize: 15 },
-  confirmBtn:         { flex: 1, padding: 14, borderRadius: 12, backgroundColor: '#FFCC00', alignItems: 'center' },
-  confirmBtnDisabled: { opacity: 0.4 },
-  confirmText:        { color: '#000', fontWeight: '900', fontSize: 15 },
-});
-
+import { Avatar } from '../../components/profile/Avatar';
+import { InfoRow, EditableRow } from '../../components/profile/ProfileRows';
+import { EditModal, EditField } from '../../components/profile/EditModal';
+import { TopupModal } from '../../components/profile/TopupModal';
+import { FavoriteClubModal } from '../../components/profile/FavoriteClubModal';
+import { handleApiError } from '../../services/errorHandler';
 // ─── ProfileScreen ────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const { user, logout, updateUser, setAuth, favoriteClubId, setFavoriteClub } = useAuthStore();
@@ -425,7 +47,7 @@ export default function ProfileScreen() {
     try {
       const fresh = await refreshUser(user.member_id, user.icafe_id);
       setAuth(fresh);
-    } catch (e: any) { Alert.alert('Ошибка', e.message); }
+    } catch (e: any) { handleApiError(e?.response?.data?.code ?? 1, e?.message); }
     finally { setRefreshing(false); }
   };
 
@@ -435,7 +57,7 @@ export default function ProfileScreen() {
     try {
       await updateProfile(user, { [field]: value });
       updateUser({ [field]: value } as any);
-    } catch (e: any) { Alert.alert('Ошибка', e.message || 'Не удалось сохранить'); }
+    } catch (e: any) { handleApiError(e?.response?.data?.code ?? 1, e?.message || 'Не удалось сохранить'); }
   };
 
   const handleLogout = () => {
@@ -472,7 +94,7 @@ const handleChangeAvatar = async () => {
       Alert.alert('Успех', 'Фото профиля обновлено!');
     }
   } catch {
-    Alert.alert('Ошибка', 'Не удалось обновить аватарку');
+    handleApiError(1, 'Не удалось обновить аватарку');
   } finally {
     setUploadingAvatar(false);
   }
@@ -494,7 +116,7 @@ const handleChangeAvatar = async () => {
         <View style={styles.header}>
           <TouchableOpacity activeOpacity={0.8} onPress={handleChangeAvatar} disabled={uploadingAvatar}>
             {uploadingAvatar ? (
-              <View style={avatarSt.wrap}><ActivityIndicator color="#FFCC00" /></View>
+              <View style={{ width: 90, height: 90, borderRadius: 45, backgroundColor: '#1A1A1A', borderWidth: 3, borderColor: '#FFCC00', justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color="#FFCC00" /></View>
             ) : (
               <>
                 <Avatar photo={user.photo} name={user.member_account} />

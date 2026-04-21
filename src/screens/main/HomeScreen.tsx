@@ -1,116 +1,40 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, Alert, Image } from 'react-native';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  ActivityIndicator, RefreshControl, Alert, Image,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuthStore } from '../../store/useAuthStore';
-import { useBookingStore, LocalBooking } from '../../store/useBookingStore';
+import { useBookingStore } from '../../store/useBookingStore';
 import { refreshUser } from '../../services/authService';
-import { fetchClubs, Club } from '../../services/clubsService';
-import { getActiveBookings, ActiveBooking } from '../../services/bookingService';
-import { get } from '../../api/apiClient';
+import { fetchClubs } from '../../services/clubsService';
+import { getActiveBookings, fetchSpecialOffers, fetchRooms } from '../../services/bookingService';
 import { ArrowRightIcon, ControllerIcon, BookingIcon } from '../../components/ui/Icons';
+import {
+  formatDate, formatTime, calcLocalEndTime, getNearestBookingTime,
+} from '../../utils/dateUtils';
+import {
+  extractStreet, getZoneAccent, getZoneFromBooking, findPassword,
+} from '../../utils/bookingUtils';
+import { Club } from '../../types';
+import { ActiveBooking, RoomFromApi, SpecialOffer } from '../../types';
+import { handleApiError } from '../../services/errorHandler';
 
-interface SpecialOffer {
-  product_id: number | string;
-  product_name: string;
-  total_price: string;
-  duration: string;
-  group_name: string;
-  price_per_hour?: number;
-}
-
-function formatDate(dateStr: string): string {
-  const d = dateStr.slice(0, 10).split('-');
-  return `${d[2]}.${d[1]}.${d[0]}`;
-}
-
-function formatTime(dateStr: string): string {
-  return dateStr.slice(11, 16);
-}
-
-/** Время окончания для локальной брони (startDate + startTime + mins) */
-function calcLocalEndTime(startDate: string, startTime: string, mins: number): string {
-  const [h, m] = startTime.split(':').map(Number);
-  const start = new Date(`${startDate}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`);
-  if (isNaN(start.getTime())) return '';
-  const end = new Date(start.getTime() + mins * 60000);
-  const dd = String(end.getDate()).padStart(2, '0');
-  const mo = String(end.getMonth() + 1).padStart(2, '0');
-  const yyyy = end.getFullYear();
-  return `${dd}.${mo}.${yyyy} ${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
-}
-
-function extractStreet(address: string): string {
-  const parts = address.split(',');
-  return parts.length >= 2 ? parts[1].trim() : address;
-}
-
-/** Ближайшее доступное время для бронирования (следующий получасовой слот) */
-function getNearestBookingTime(): { date: string; time: string } {
-  const now = new Date();
-  const mins = now.getMinutes();
-  const nextMins = mins < 30 ? 30 : 60;
-  const offset = nextMins - mins;
-  const next = new Date(now.getTime() + offset * 60000);
-  const date = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-  const time = `${String(next.getHours()).padStart(2, '0')}:${String(next.getMinutes()).padStart(2, '0')}`;
-  return { date, time };
-}
-
-const ZONE_STYLES: Record<string, { accent: string }> = {
-  BC:      { accent: '#ffffff' },
-  GZ:      { accent: '#ffffff' },
-  VP:      { accent: '#ffffff' },
-  default: { accent: '#FFCC00' },
-};
-
-function getZoneAccent(zoneName: string): string {
-  const z = zoneName?.toUpperCase();
-  if (z?.includes('BC') || z?.includes('BOOT')) return ZONE_STYLES.BC.accent;
-  if (z?.includes('VIP') || z?.includes('VP')) return ZONE_STYLES.VP.accent;
-  if (z?.includes('GZ') || z?.includes('GAME')) return ZONE_STYLES.GZ.accent;
-  return ZONE_STYLES.default.accent;
-}
-
-function findPassword(serverBooking: ActiveBooking, localBookings: LocalBooking[]): string | null {
-  const serverPc = serverBooking.product_pc_name.toLowerCase();
-  const serverDate = serverBooking.product_available_date_local_from.slice(0, 10);
-  const serverTime = serverBooking.product_available_date_local_from.slice(11, 16);
-  const match = localBookings.find((b) =>
-    b.pcName.toLowerCase() === serverPc &&
-    b.startDate === serverDate &&
-    b.startTime === serverTime
-  );
-  return match?.password ?? null;
-}
-
-function getZoneFromBooking(pcName: string, description: string, rooms: any[]): string | null {
-  if (rooms && rooms.length > 0) {
-    for (const room of rooms) {
-      const foundPc = (room.pcs_list || []).find((pc: any) => pc.pc_name.toLowerCase() === pcName.toLowerCase());
-      if (foundPc && room.area_name) return room.area_name;
-    }
-  }
-  const desc = description?.split('@')[0]?.trim();
-  if (desc && !desc.toLowerCase().startsWith('почасовая') && !desc.toLowerCase().startsWith('повременн')) {
-    return desc;
-  }
-  return null;
-}
+type NavigationProp = ReturnType<typeof useNavigation<any>>;
 
 export default function HomeScreen() {
-  const navigation = useNavigation<any>();
-  const { user, updateUser } = useAuthStore();
-  const { favoriteClubId } = useAuthStore();
+  const navigation = useNavigation<NavigationProp>();
+  const { user, updateUser, favoriteClubId } = useAuthStore();
   const { bookings, loadLocalBookings, isInitialLoaded, setIsInitialLoaded } = useBookingStore();
 
-  const [clubs, setClubs] = useState<Club[]>([]);
-  const [rooms, setRooms] = useState<any[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const [clubs, setClubs]                   = useState<Club[]>([]);
+  const [rooms, setRooms]                   = useState<RoomFromApi[]>([]);
+  const [refreshing, setRefreshing]         = useState(false);
   const [serverBookings, setServerBookings] = useState<ActiveBooking[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
-  const [offers, setOffers] = useState<SpecialOffer[]>([]);
-  const [offersLoading, setOffersLoading] = useState(false);
+  const [offers, setOffers]                 = useState<SpecialOffer[]>([]);
+  const [offersLoading, setOffersLoading]   = useState(false);
 
   useEffect(() => { loadLocalBookings(); }, []);
 
@@ -122,12 +46,11 @@ export default function HomeScreen() {
   }, [user?.member_id, isInitialLoaded]);
 
   useEffect(() => {
-  if (clubs.length > 0 && isInitialLoaded) {
-    const club = clubs.find((c) => String(c.icafe_id) === favoriteClubId) ?? clubs[0] ?? null;
-    if (club) loadOffers(club);
-  }
-}, [favoriteClubId]);
-
+    if (clubs.length > 0 && isInitialLoaded) {
+      const club = clubs.find(c => String(c.icafe_id) === favoriteClubId) ?? clubs[0] ?? null;
+      if (club) loadOffers(club);
+    }
+  }, [favoriteClubId]);
 
   const loadData = async (showLoader = true) => {
     if (showLoader) setRefreshing(true);
@@ -136,22 +59,23 @@ export default function HomeScreen() {
         try {
           const freshUser = await refreshUser(user.member_id, user.icafe_id);
           updateUser(freshUser);
-        } catch (err) {
-          console.warn('[HomeScreen] Ошибка обновления профиля:', err);
+        } catch {
+          // Обновление профиля некритично — молча пропускаем
         }
       }
+
       const clubsData = await fetchClubs();
       setClubs(clubsData);
-      const mainClub = clubsData.find((c) => String(c.icafe_id) === favoriteClubId) ?? clubsData?.[0] ?? null;
 
+      const mainClub = clubsData.find(c => String(c.icafe_id) === favoriteClubId) ?? clubsData[0] ?? null;
       if (mainClub) {
         loadOffers(mainClub);
-        get('/struct-rooms-icafe', { cafeId: mainClub.icafe_id })
-          .then((res: any) => setRooms(res?.rooms ?? (Array.isArray(res) ? res : [])))
+        fetchRooms(mainClub.icafe_id)
+          .then(setRooms)
           .catch(() => {});
-}
-    } catch (e) {
-      console.error('[HomeScreen loadData] Error:', e);
+      }
+    } catch (e: any) {
+      handleApiError(e?.response?.data?.code ?? 1, e?.message);
     } finally {
       setRefreshing(false);
       loadLocalBookings();
@@ -173,58 +97,12 @@ export default function HomeScreen() {
     }
   };
 
-  const loadOffers = async (club?: Club) => {
-    if (!club) return;
+  const loadOffers = async (club: Club) => {
     setOffersLoading(true);
     try {
-      const data: any = await get(`/api/v2/cafe/${club.icafe_id}/products`);
-      const rawProducts: any[] = Array.isArray(data)
-        ? data
-        : (data?.items || data?.products || data?.data || []);
-
-      const seen = new Set<string>();
-      const unique = rawProducts.filter((p: any) => {
-        const id = String(p.product_id);
-        if (seen.has(id)) return false;
-        seen.add(id);
-        return true;
-      });
-
-      const parseName = (raw: string) => raw?.split('<<<')[0]?.trim() ?? raw;
-      const parseZone = (raw: string) => {
-        const p = raw?.split('<<<');
-        return p?.length && p.length > 1 ? p[p.length - 1]?.trim() : '';
-      };
-      const parseDurationFromName = (name: string): number => {
-        const h = name.match(/(\d+)\s*(час|часа|часов)/i);
-        if (h) return parseInt(h[1], 10) * 60;
-        const m = name.match(/(\d+)\s*мин/i);
-        if (m) return parseInt(m[1], 10);
-        return 0;
-      };
-
-      const validProducts: SpecialOffer[] = unique
-        .filter((p: any) => p.product_enable_client !== 0)
-        .map((p: any, idx: number) => {
-          const raw: string = p.product_name ?? '';
-          const name = parseName(raw);
-          const zone = parseZone(raw);
-          const durationMins = parseDurationFromName(name);
-          const totalPrice = parseFloat(p.product_cost ?? p.product_price ?? '0');
-          const pricePerHour = durationMins > 0 ? Math.round(totalPrice / (durationMins / 60)) : 0;
-          return {
-            product_id: p.product_id != null ? `${p.product_id}` : `idx_${idx}`,
-            product_name: name,
-            total_price: String(totalPrice),
-            duration: String(durationMins),
-            group_name: zone,
-            price_per_hour: pricePerHour,
-          };
-        })
-        .filter((p) => Number(p.duration) > 0 && Number(p.total_price) > 0);
-
-      setOffers(validProducts.slice(0, 10));
-    } catch (e) {
+      const result = await fetchSpecialOffers(club.icafe_id);
+      setOffers(result);
+    } catch {
       setOffers([]);
     } finally {
       setOffersLoading(false);
@@ -235,14 +113,14 @@ export default function HomeScreen() {
     Alert.alert('Отмена брони', 'Для отмены брони обратитесь к администратору клуба.');
   };
 
-  const nearestClub = clubs.find((c) => String(c.icafe_id) === favoriteClubId) ?? clubs[0] ?? null;
+  const nearestClub    = clubs.find(c => String(c.icafe_id) === favoriteClubId) ?? clubs[0] ?? null;
   const currentAccount = user?.member_account || user?.account;
-  const activeLocalBookings = bookings.filter((b) =>
-    b.timestamp + b.mins * 60000 > Date.now() &&
-    b.account === currentAccount
+
+  const activeLocalBookings = bookings.filter(b =>
+    b.timestamp + b.mins * 60000 > Date.now() && b.account === currentAccount,
   );
-  const showLocal = serverBookings.length === 0 && !bookingsLoading && activeLocalBookings.length > 0;
-  const lastBooking = bookings.find((b) => b.account === currentAccount) ?? null;
+  const showLocal  = serverBookings.length === 0 && !bookingsLoading && activeLocalBookings.length > 0;
+  const lastBooking = bookings.find(b => b.account === currentAccount) ?? null;
 
   const handleNearestClubPress = () => {
     if (!nearestClub) return;
@@ -258,8 +136,7 @@ export default function HomeScreen() {
     if (lastBooking) {
       navigation.navigate('Booking', {
         cafeId: lastBooking.cafeId,
-        date,
-        time,
+        date, time,
         mins: lastBooking.mins,
         pcName: lastBooking.pcName,
         _resetStep: 'pcs',
@@ -275,9 +152,7 @@ export default function HomeScreen() {
     const { date, time } = getNearestBookingTime();
     navigation.navigate('Booking', {
       cafeId: String(nearestClub.icafe_id),
-      date,
-      time,
-      mins: dur,
+      date, time, mins: dur,
       _resetStep: 'pcs',
       _t: Date.now(),
     });
@@ -287,7 +162,9 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadData(true)} tintColor="#FFCC00" />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => loadData(true)} tintColor="#FFCC00" />
+        }
       >
         {/* ── Шапка ── */}
         <View style={styles.header}>
@@ -300,7 +177,9 @@ export default function HomeScreen() {
               <Image source={{ uri: user.photo }} style={styles.avatarPlaceholder} />
             ) : (
               <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>{(user?.first_name || user?.account || 'U').slice(0, 1).toUpperCase()}</Text>
+                <Text style={styles.avatarText}>
+                  {(user?.first_name || user?.account || 'U').slice(0, 1).toUpperCase()}
+                </Text>
               </View>
             )}
           </TouchableOpacity>
@@ -322,7 +201,8 @@ export default function HomeScreen() {
             onPress={() => navigation.navigate('Booking', { _resetStep: 'club', _t: Date.now() })}
             activeOpacity={0.85}
           >
-            <BookingIcon size={18} color="#000" /><Text style={styles.actionBtnText}>ЗАБРОНИРОВАТЬ ПК</Text>
+            <BookingIcon size={18} color="#000" />
+            <Text style={styles.actionBtnText}>ЗАБРОНИРОВАТЬ ПК</Text>
           </TouchableOpacity>
         </View>
 
@@ -357,7 +237,7 @@ export default function HomeScreen() {
             {offersLoading
               ? <ActivityIndicator color="#FFCC00" style={{ marginBottom: 16 }} />
               : (() => {
-                  const grouped: Record<number, typeof offers> = {};
+                  const grouped: Record<number, SpecialOffer[]> = {};
                   offers.forEach(o => {
                     const d = Number(o.duration);
                     if (!grouped[d]) grouped[d] = [];
@@ -366,7 +246,7 @@ export default function HomeScreen() {
                   const durations = Object.keys(grouped).map(Number).sort((a, b) => a - b).slice(0, 2);
                   return (
                     <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
-                      {durations.map((dur) => {
+                      {durations.map(dur => {
                         const zones = grouped[dur];
                         const hours = dur / 60;
                         return (
@@ -417,11 +297,11 @@ export default function HomeScreen() {
               {bookingsLoading && <ActivityIndicator size="small" color="#FFCC00" />}
             </View>
             {serverBookings.map((b, index) => {
-              const password = findPassword(b, bookings);
-              const zone = getZoneFromBooking(b.product_pc_name, b.product_description, rooms);
-              const startStr = b.product_available_date_local_from;
-              const endStr = b.product_available_date_local_to;
-              const endTime = endStr ? `${formatDate(endStr)} ${formatTime(endStr)}` : '';
+              const password  = findPassword(b, bookings);
+              const zone      = getZoneFromBooking(b.product_pc_name, b.product_description, rooms);
+              const startStr  = b.product_available_date_local_from;
+              const endStr    = b.product_available_date_local_to;
+              const endTime   = endStr ? `${formatDate(endStr)} ${formatTime(endStr)}` : '';
               const cardTitle = index === 0 ? 'БЛИЖАЙШАЯ БРОНЬ' : 'БРОНЬ';
               return (
                 <View key={b.member_offer_id} style={styles.activeBookingCard}>
@@ -461,8 +341,8 @@ export default function HomeScreen() {
 
         {/* ── Активные брони (локальные) ── */}
         {showLocal && activeLocalBookings.map((b, index) => {
-          const zone = getZoneFromBooking(b.pcName, '', rooms);
-          const endTime = calcLocalEndTime(b.startDate, b.startTime, b.mins);
+          const zone      = getZoneFromBooking(b.pcName, '', rooms);
+          const endTime   = calcLocalEndTime(b.startDate, b.startTime, b.mins);
           const cardTitle = index === 0 ? 'БЛИЖАЙШАЯ БРОНЬ' : 'БРОНЬ';
           return (
             <View key={b.id} style={styles.activeBookingCard}>

@@ -6,68 +6,70 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getVkNews } from '../../services/newsService';
+import { VK_GROUP_ID } from '../../constants/config';
+import { NewsItem } from '../../types';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const VK_GROUP_ID = 221562447;
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp * 1000);
-  const now = new Date();
+  const now  = new Date();
   const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
-  if (diff < 3600) return `${Math.floor(diff / 60)} мин назад`;
+  if (diff < 3600)  return `${Math.floor(diff / 60)} мин назад`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} ч назад`;
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 }
 
-function NewsCard({ item, onImagePress }: { item: any; onImagePress: (url: string) => void }) {
+interface NewsCardProps {
+  item: NewsItem;
+  onImagePress: (url: string) => void;
+}
+
+function NewsCard({ item, onImagePress }: NewsCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const isLongText = item.text && item.text.length > 200;
 
   const toggleExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setExpanded(!expanded);
   };
 
-  const isLongText = item.text && item.text.length > 200;
-
   return (
     <View style={styles.card}>
       {item.images && item.images.length > 0 && (
-      <View style={styles.imageGrid}>
-        {item.images.length === 1 ? (
-          // одна фото — на всю ширину
-          <TouchableOpacity activeOpacity={0.9} onPress={() => onImagePress(item.images[0])} style={styles.imageContainer}>
-            <Image source={{ uri: item.images[0] }} style={styles.cardImage} resizeMode="cover" />
-          </TouchableOpacity>
-        ) : item.images.length === 2 ? (
-          // две фото — рядом
-          <View style={styles.imageRow}>
-            {item.images.map((img: string, i: number) => (
-              <TouchableOpacity key={i} activeOpacity={0.9} onPress={() => onImagePress(img)} style={styles.imageHalf}>
-                <Image source={{ uri: img }} style={styles.cardImage} resizeMode="cover" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : (
-          // 3+ фото — первая большая, остальные сеткой по 2
-          <>
-            <TouchableOpacity activeOpacity={0.9} onPress={() => onImagePress(item.images[0])} style={styles.imageContainer}>
+        <View style={styles.imageGrid}>
+          {item.images.length === 1 ? (
+            <TouchableOpacity activeOpacity={0.9} onPress={() => onImagePress(item.images![0])} style={styles.imageContainer}>
               <Image source={{ uri: item.images[0] }} style={styles.cardImage} resizeMode="cover" />
             </TouchableOpacity>
+          ) : item.images.length === 2 ? (
             <View style={styles.imageRow}>
-              {item.images.slice(1).map((img: string, i: number) => (
+              {item.images.map((img, i) => (
                 <TouchableOpacity key={i} activeOpacity={0.9} onPress={() => onImagePress(img)} style={styles.imageHalf}>
                   <Image source={{ uri: img }} style={styles.cardImage} resizeMode="cover" />
                 </TouchableOpacity>
               ))}
             </View>
-          </>
-        )}
-      </View>
-    )}
+          ) : (
+            <>
+              <TouchableOpacity activeOpacity={0.9} onPress={() => onImagePress(item.images![0])} style={styles.imageContainer}>
+                <Image source={{ uri: item.images[0] }} style={styles.cardImage} resizeMode="cover" />
+              </TouchableOpacity>
+              <View style={styles.imageRow}>
+                {item.images.slice(1).map((img, i) => (
+                  <TouchableOpacity key={i} activeOpacity={0.9} onPress={() => onImagePress(img)} style={styles.imageHalf}>
+                    <Image source={{ uri: img }} style={styles.cardImage} resizeMode="cover" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+        </View>
+      )}
 
       <View style={styles.cardHeader}>
         <Image source={require('../../../assets/logo.png')} style={styles.avatarPlaceholder} />
@@ -80,15 +82,13 @@ function NewsCard({ item, onImagePress }: { item: any; onImagePress: (url: strin
       {item.text ? (
         <View style={styles.textBlock}>
           {expanded || !isLongText ? (
-            <Text selectable={true} style={styles.cardText}>{item.text}</Text>
+            <Text selectable style={styles.cardText}>{item.text}</Text>
           ) : (
             <Text style={styles.cardText} numberOfLines={5}>{item.text}</Text>
           )}
           {isLongText && (
             <TouchableOpacity onPress={toggleExpand} style={styles.moreBtn} activeOpacity={0.7}>
-              <Text style={styles.moreBtnText}>
-                {expanded ? 'Свернуть ↑' : 'Подробнее ↓'}
-              </Text>
+              <Text style={styles.moreBtnText}>{expanded ? 'Свернуть ↑' : 'Подробнее ↓'}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -97,7 +97,7 @@ function NewsCard({ item, onImagePress }: { item: any; onImagePress: (url: strin
       {item.poll && (
         <View style={styles.pollContainer}>
           <Text style={styles.pollTitle}>📊 {item.poll.question}</Text>
-          {item.poll.answers.map((ans: any, idx: number) => (
+          {item.poll.answers.map((ans, idx) => (
             <View key={idx} style={styles.pollAnswer}>
               <View style={[styles.pollProgress, { width: `${ans.rate}%` }]} />
               <Text style={styles.pollAnswerText}>{ans.text}</Text>
@@ -120,8 +120,8 @@ function NewsCard({ item, onImagePress }: { item: any; onImagePress: (url: strin
 }
 
 export default function NewsScreen() {
-  const [news, setNews] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [news, setNews]           = useState<NewsItem[]>([]);
+  const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedImg, setSelectedImg] = useState<string | null>(null);
 
@@ -130,7 +130,7 @@ export default function NewsScreen() {
       const data = await getVkNews();
       setNews(data);
     } catch (err) {
-      console.error(err);
+      console.error('[NewsScreen]', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -153,13 +153,13 @@ export default function NewsScreen() {
 
       <FlatList
         data={news}
-        keyExtractor={(item) => String(item.id)}
+        keyExtractor={item => String(item.id)}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => <NewsCard item={item} onImagePress={setSelectedImg} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FFCC00" />}
       />
 
-      <Modal visible={!!selectedImg} transparent={true} animationType="fade">
+      <Modal visible={!!selectedImg} transparent animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setSelectedImg(null)}>
           {selectedImg && <Image source={{ uri: selectedImg }} style={styles.fullImage} resizeMode="contain" />}
         </TouchableOpacity>

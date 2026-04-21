@@ -1,23 +1,22 @@
 import { Alert } from 'react-native';
 
-
 export function handleApiError(code: number, message?: string) {
   let userMessage = '';
 
   switch (code) {
+    // ─── Успех ────────────────────────────────────────────────────────────────
     case 0:
-      
       return;
 
+    // ─── Общие ошибки ─────────────────────────────────────────────────────────
     case 1:
       userMessage = 'Произошла ошибка на стороне сервера. Попробуйте позже.';
       break;
-
     case 2:
       userMessage = 'Сервис временно недоступен. Ведутся технические работы.';
       break;
 
-
+    // ─── 41x — Пустые параметры ───────────────────────────────────────────────
     case 411:
       userMessage = 'Не указан номер телефона.';
       break;
@@ -27,11 +26,14 @@ export function handleApiError(code: number, message?: string) {
     case 413:
       userMessage = 'Отсутствует ID клиента.';
       break;
+    case 414:
+      userMessage = 'Не указано значение параметра.';
+      break;
     case 415:
       userMessage = 'Не указана валюта.';
       break;
     case 416:
-      userMessage = 'Не выбран клуб (Empty cafeId).';
+      userMessage = 'Не выбран клуб.';
       break;
     case 417:
       userMessage = 'Не выбрана дата начала бронирования.';
@@ -43,7 +45,7 @@ export function handleApiError(code: number, message?: string) {
       userMessage = 'Не указана длительность бронирования.';
       break;
 
-  
+    // ─── 45x — Некорректные параметры ─────────────────────────────────────────
     case 451:
       userMessage = 'Некорректный номер телефона.';
       break;
@@ -53,20 +55,23 @@ export function handleApiError(code: number, message?: string) {
     case 453:
       userMessage = 'Некорректный ID клиента.';
       break;
+    case 454:
+      userMessage = 'Некорректное значение параметра.';
+      break;
     case 455:
       userMessage = 'Некорректная валюта.';
       break;
 
+    // ─── Бронирование ─────────────────────────────────────────────────────────
     case 600:
-      userMessage = 'Выбранное место уже занято на это время (учитывая время на доигровку).';
+      userMessage = 'Выбранное место уже занято на это время. Выберите другой ПК или время.';
       break;
 
+    // ─── Неизвестная ошибка ───────────────────────────────────────────────────
     default:
-  
       userMessage = message || `Произошла системная ошибка (Код: ${code})`;
       break;
   }
-
 
   Alert.alert('Внимание', userMessage);
 }
