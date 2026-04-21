@@ -58,10 +58,11 @@ export const fetchServerPackages = async (cafeId: string | number): Promise<Serv
 
   const parsed: ServerPackage[] = unique
     .map(p => {
-      const label        = parseName(p.product_name ?? '');
-      const zone         = parseZone(p.product_name ?? '');
-      const value        = parseDurationFromName(label);
-      const price        = parseFloat(String(p.product_cost ?? p.product_price ?? '0'));
+      const label = parseName(p.product_name ?? '');
+      // Приоритет: готовые поля API → парсинг строки product_name как fallback
+      const value = p.duration ?? p.duration_min ?? parseDurationFromName(label);
+      const zone  = p.group_name ?? parseZone(p.product_name ?? '');
+      const price = parseFloat(String(p.total_price ?? p.product_cost ?? p.product_price ?? '0'));
       const pricePerHour = value > 0 ? Math.round(price / (value / 60)) : 0;
       return { id: String(p.product_id), label, zone, value, price, pricePerHour, highlight: false };
     })
@@ -80,9 +81,10 @@ export const fetchSpecialOffers = async (cafeId: string | number): Promise<Speci
     .map((p, idx) => {
       const rawName      = p.product_name ?? '';
       const name         = parseName(rawName);
-      const zone         = parseZone(rawName);
-      const durationMins = parseDurationFromName(name);
-      const totalPrice   = parseFloat(String(p.product_cost ?? p.product_price ?? '0'));
+      // Приоритет: готовые поля API → парсинг строки как fallback
+      const durationMins = p.duration ?? p.duration_min ?? parseDurationFromName(name);
+      const zone         = p.group_name ?? parseZone(rawName);
+      const totalPrice   = parseFloat(String(p.total_price ?? p.product_cost ?? p.product_price ?? '0'));
       const pricePerHour = durationMins > 0 ? Math.round(totalPrice / (durationMins / 60)) : 0;
       return {
         product_id:    p.product_id != null ? String(p.product_id) : `idx_${idx}`,

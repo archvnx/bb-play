@@ -147,12 +147,13 @@ export default function HomeScreen() {
     }
   };
 
-  const handleOfferPress = (dur: number) => {
+  const handleOfferPress = (dur: number, productId: string) => {
     if (!nearestClub) return;
     const { date, time } = getNearestBookingTime();
     navigation.navigate('Booking', {
-      cafeId: String(nearestClub.icafe_id),
+      cafeId:    String(nearestClub.icafe_id),
       date, time, mins: dur,
+      productId,           // ← передаём product_id выбранного пакета
       _resetStep: 'pcs',
       _t: Date.now(),
     });
@@ -254,7 +255,7 @@ export default function HomeScreen() {
                             key={dur}
                             style={styles.offerPkgCard}
                             activeOpacity={0.8}
-                            onPress={() => handleOfferPress(dur)}
+                            onPress={() => handleOfferPress(dur, zones[0].product_id)}
                           >
                             <Text style={styles.offerPkgTitle}>
                               {hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}

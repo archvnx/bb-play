@@ -67,6 +67,20 @@ export function buildTimeOptions(selectedDate: string): TimeOption[] {
       options.push({ label: `${hh}:${mm}`, value: `${hh}:${mm}` });
     }
   }
+
+  // После 23:30 сегодня не остаётся слотов — возвращаем полный список,
+  // чтобы компонент мог корректно отобразить выбор (дата уже переключится
+  // на «Завтра» вызывающим кодом или пользователем).
+  if (options.length === 0) {
+    for (let h = 0; h < 24; h++) {
+      for (const m of [0, 30]) {
+        const hh = String(h).padStart(2, '0');
+        const mm = String(m).padStart(2, '0');
+        options.push({ label: `${hh}:${mm}`, value: `${hh}:${mm}` });
+      }
+    }
+  }
+
   return options;
 }
 

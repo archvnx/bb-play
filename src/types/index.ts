@@ -105,6 +105,10 @@ export interface BookingPayload {
   rand_key: string;
   key: string;
   is_check_booking_pc?: boolean;
+  /** ID продукта-пакета; передаётся когда пользователь выбрал пакет вместо обычного тарифа */
+  product_id?: string;
+  /** Название пакета (product_name до <<<); именно по нему бэкенд определяет ветку пакетного бронирования */
+  priceName?: string;
 }
 
 export interface BookingResult {
@@ -136,6 +140,16 @@ export interface ProductFromApi {
   product_cost?: string;
   product_price?: string;
   product_enable_client: number;
+  /** Длительность пакета в минутах (готовое поле API, не требует парсинга) */
+  duration?: number;
+  /** Дублирует duration — используем как fallback */
+  duration_min?: number;
+  /** Итоговая стоимость пакета (готовое поле API) */
+  total_price?: string;
+  /** Название зоны/группы (готовое поле API, напр. "VIP", "GameZone") */
+  group_name?: string;
+  /** Отображаемое имя продукта из API */
+  show_product_name?: string;
 }
 
 export interface SpecialOffer {

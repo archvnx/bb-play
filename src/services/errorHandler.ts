@@ -1,7 +1,19 @@
 import { Alert } from 'react-native';
 
-// Защита от дублирующихся алертов: показываем не чаще одного раза в 2 секунды
+// Защита от дублирующихся алертов
+// Флаг сбрасывается как при нажатии ОК, так и через таймаут (на случай закрытия
+// алерта системным жестом на iOS без нажатия кнопки).
+const ALERT_TIMEOUT_MS = 5000;
 let isAlertShowing = false;
+let alertTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+function setAlertShowing(value: boolean) {
+  isAlertShowing = value;
+  if (alertTimeoutId) clearTimeout(alertTimeoutId);
+  if (value) {
+    alertTimeoutId = setTimeout(() => { isAlertShowing = false; }, ALERT_TIMEOUT_MS);
+  }
+}
 
 export function handleApiError(code: number, message?: string) {
   let userMessage = '';
@@ -23,9 +35,9 @@ export function handleApiError(code: number, message?: string) {
     case 411:
       userMessage = 'Не указан номер телефона.';
       break;
-    case 412:
-      userMessage = 'Не указан email.';
-      break;
+    // Примечание: код 412 намеренно исключён отсюда — он используется как сигнал
+    // верификации SMS в apiClient.ts и обрабатывается в authService напрямую.
+    // Если 412 всё же попадёт сюда, он уйдёт в default с оригинальным message.
     case 413:
       userMessage = 'Отсутствует ID клиента.';
       break;
@@ -77,9 +89,9 @@ export function handleApiError(code: number, message?: string) {
   }
 
   if (isAlertShowing) return;
-  isAlertShowing = true;
+  setAlertShowing(true);
 
   Alert.alert('Внимание', userMessage, [
-    { text: 'ОК', onPress: () => { isAlertShowing = false; } },
+    { text: 'ОК', onPress: () => { setAlertShowing(false); } },
   ]);
 }
