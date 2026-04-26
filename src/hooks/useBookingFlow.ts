@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ZONE_MAP } from "../constants/config";
 import {
   createBooking,
+  createBookingWithOffer,
   fetchAvailablePcs,
   fetchClubsForBooking,
   fetchMapData,
@@ -14,6 +15,7 @@ import {
   fetchServerPackages,
 } from "../services/bookingService";
 import { handleApiError } from "../services/errorHandler";
+import { saveBookingToHistory } from "../services/backendService";
 import { useAuthStore } from "../store/useAuthStore";
 import { useBookingStore } from "../store/useBookingStore";
 import type {
@@ -324,31 +326,44 @@ export function useBookingFlow() {
         mins,
         randKey,
       );
-      // Ищем выбранный пакет с учётом нормализации зоны
+      // Ищем выбранный пакет с учётом нормализации зоны.
+      // Если строгий поиск (zone + duration) не дал результата — берём любой пакет
+      // с нужным duration, чтобы priceName гарантированно попал в payload.
       const zone = normalizeZone(selectedPc.pc_area_name);
       const selectedPkg = selectedDuration
-        ? serverPackages.find(
+        ? (serverPackages.find(
             (p) =>
               p.value === selectedDuration && normalizeZone(p.zone) === zone,
-          )
+          ) ??
+          serverPackages.find((p) => p.value === selectedDuration))
         : undefined;
 
-      const bookingPayload = {
-        icafe_id: String(selectedClub.icafe_id),
-        pc_name: selectedPc.pc_name,
-        member_account: user.member_account,
-        member_id: user.member_id,
-        start_date: date,
-        start_time: time,
-        mins,
-        rand_key: randKey,
-        key,
-        // Бэкенд определяет пакетную ветку именно по priceName,
-        // product_id оставляем как доп. поле на случай будущей поддержки
-        priceName: selectedPkg?.label,
-        product_id: selectedPkg?.id,
-      };
-      const result: BookingResult = await createBooking(bookingPayload);
+      let result: BookingResult;
+      if (selectedPkg) {
+        // Бронирование с пакетом — официальный iCafeCloud эндпоинт
+        result = await createBookingWithOffer({
+          cafeId: selectedClub.icafe_id,
+          member_id: user.member_id,
+          offer_id: Number(selectedPkg.id),
+          pc_name: selectedPc.pc_name,
+          start_date: date,
+          start_time: time,
+          mins,
+        });
+      } else {
+        // Обычное бронирование
+        result = await createBooking({
+          icafe_id: String(selectedClub.icafe_id),
+          pc_name: selectedPc.pc_name,
+          member_account: user.member_account,
+          member_id: user.member_id,
+          start_date: date,
+          start_time: time,
+          mins,
+          rand_key: randKey,
+          key,
+        });
+      }
 
       const pwd =
         result?.iCafe_response?.data?.booking_password ||
@@ -375,6 +390,17 @@ export function useBookingFlow() {
         password: String(pwd),
         timestamp: Date.now(),
         account: user.member_account,
+      });
+      saveBookingToHistory({
+        member_id:     user.member_id,
+        member_account: user.member_account,
+        icafe_id:      String(selectedClub.icafe_id),
+        cafe_address:  selectedClub.address,
+        pc_name:       selectedPc.pc_name,
+        start_date:    date,
+        start_time:    time,
+        duration_mins: mins,
+        cost:          Number(cost) || 0,
       });
       setSuccessData({
         password: String(pwd),

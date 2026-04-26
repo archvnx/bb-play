@@ -34,11 +34,5 @@ export const PKG_ZONE_NAMES: Record<string, string> = {
   VP: 'VIP',
 };
 
-/** Акцентные цвета зон для главного экрана */
-export const HOME_ZONE_STYLES: Record<string, { accent: string }> = {
-  BC:      { accent: '#ffffff' },
-  GZ:      { accent: '#ffffff' },
-  VP:      { accent: '#ffffff' },
-  default: { accent: '#FFCC00' },
-};
-
+/** Акцентные цвета зон для главного экрана — те же, что и в экране бронирования */
+export const HOME_ZONE_STYLES = PKG_ZONE_STYLES;

@@ -107,7 +107,9 @@ export interface BookingPayload {
   is_check_booking_pc?: boolean;
   /** ID продукта-пакета; передаётся когда пользователь выбрал пакет вместо обычного тарифа */
   product_id?: string;
-  /** Название пакета (product_name до <<<); именно по нему бэкенд определяет ветку пакетного бронирования */
+  /** offer_id — числовой алиас product_id для совместимости с iCafeCloud API */
+  offer_id?: number;
+  /** Исходное product_name из API — именно по нему iCafeCloud определяет пакет */
   priceName?: string;
 }
 
@@ -163,7 +165,10 @@ export interface SpecialOffer {
 
 export interface ServerPackage {
   id: string;
+  /** Отображаемое название (product_name до <<<) */
   label: string;
+  /** Исходное product_name из API — используется как priceName в payload бронирования */
+  rawName: string;
   zone: string;
   value: number;
   price: number;

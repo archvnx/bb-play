@@ -58,13 +58,14 @@ export const fetchServerPackages = async (cafeId: string | number): Promise<Serv
 
   const parsed: ServerPackage[] = unique
     .map(p => {
-      const label = parseName(p.product_name ?? '');
+      const rawName = p.product_name ?? '';
+      const label = parseName(rawName);
       // Приоритет: готовые поля API → парсинг строки product_name как fallback
       const value = p.duration ?? p.duration_min ?? parseDurationFromName(label);
-      const zone  = p.group_name ?? parseZone(p.product_name ?? '');
+      const zone  = p.group_name ?? parseZone(rawName);
       const price = parseFloat(String(p.total_price ?? p.product_cost ?? p.product_price ?? '0'));
       const pricePerHour = value > 0 ? Math.round(price / (value / 60)) : 0;
-      return { id: String(p.product_id), label, zone, value, price, pricePerHour, highlight: false };
+      return { id: String(p.product_id), rawName, label, zone, value, price, pricePerHour, highlight: false };
     })
     .filter(p => p.value > 0 && p.price > 0)
     .sort((a, b) => a.value - b.value || a.zone.localeCompare(b.zone));
@@ -164,6 +165,24 @@ export const fetchAvailablePcs = async (
 // ─── Создание брони ───────────────────────────────────────────────────────────
 export const createBooking = async (payload: BookingPayload): Promise<BookingResult> =>
   post<BookingResult>('/booking', payload as unknown as Record<string, unknown>);
+
+/** Бронирование с пакетом через официальный iCafeCloud API */
+export const createBookingWithOffer = async (payload: {
+  cafeId: string | number;
+  member_id: string;
+  offer_id: number;
+  pc_name: string;
+  start_date: string;
+  start_time: string;
+  mins: number;
+  comment?: string;
+}): Promise<BookingResult> => {
+  const { cafeId, ...body } = payload;
+  return post<BookingResult>(
+    `/api/v2/cafe/${cafeId}/bookings/action/bookingWithOffer`,
+    body as unknown as Record<string, unknown>,
+  );
+};
 
 // ─── Активные брони ───────────────────────────────────────────────────────────
 export const getActiveBookings = async (memberAccount: string): Promise<ActiveBooking[]> => {

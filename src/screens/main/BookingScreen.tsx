@@ -98,7 +98,10 @@ export default function BookingScreen() {
           pcName={successData.pcName}
           date={date} time={time} mins={mins}
           cost={successData.cost}
-          onClose={() => { setSuccessData(null); navigation.goBack(); }}
+          onClose={() => {
+            setSuccessData(null);
+            setTimeout(() => navigation.navigate('Home'), 1000);
+          }}
         />
       )}
     </SafeAreaView>
