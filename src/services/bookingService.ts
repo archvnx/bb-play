@@ -20,14 +20,14 @@ import { parseDurationFromName, parseName, parseZone } from '../utils/bookingUti
 
 // ─── Клубы ────────────────────────────────────────────────────────────────────
 export const fetchClubsForBooking = async (): Promise<CafeBooking[]> => {
-  const data = await get<CafeBooking[]>('/cafes');
+  const data = await get<CafeBooking[]>('/cafes', undefined, { timeout: 10000 });
   const raw  = Array.isArray(data) ? data : [];
   return raw.map(c => ({ address: c.address, icafe_id: String(c.icafe_id) }));
 };
 
 // ─── Цены ─────────────────────────────────────────────────────────────────────
 export const fetchPrices = async (cafeId: string | number, memberId: string): Promise<Price[]> => {
-  const data = await get<PricesResponse>('/all-prices-icafe', { cafeId, memberId });
+  const data = await get<PricesResponse>('/all-prices-icafe', { cafeId, memberId }, { timeout: 10000 });
   return Array.isArray(data?.prices) ? data.prices : [];
 };
 
@@ -41,7 +41,7 @@ const extractProducts = (data: unknown): ProductFromApi[] => {
 
 /** Загружает сырые продукты для клуба, дедуплицируя по product_id */
 const fetchRawProducts = async (cafeId: string | number): Promise<ProductFromApi[]> => {
-  const data   = await get<unknown>(`/api/v2/cafe/${cafeId}/products`);
+  const data   = await get<unknown>(`/api/v2/cafe/${cafeId}/products`, undefined, { timeout: 10000 });
   const raw    = extractProducts(data);
   const seen   = new Set<string>();
   return raw.filter(p => {
@@ -102,7 +102,7 @@ export const fetchSpecialOffers = async (cafeId: string | number): Promise<Speci
 
 // ─── Структура зала ───────────────────────────────────────────────────────────
 export const fetchRooms = async (cafeId: string | number): Promise<RoomFromApi[]> => {
-  const data = await get<RoomsResponse>('/struct-rooms-icafe', { cafeId });
+  const data = await get<RoomsResponse>('/struct-rooms-icafe', { cafeId }, { timeout: 8000 });
   return Array.isArray(data?.rooms) ? data.rooms : [];
 };
 
@@ -158,7 +158,7 @@ export const fetchAvailablePcs = async (
     isFindWindow: true,
   };
   if (priceName) params.priceName = priceName;
-  const data = await get<AvailablePcsResponse>('/available-pcs-for-booking', params);
+  const data = await get<AvailablePcsResponse>('/available-pcs-for-booking', params, { timeout: 10000 });
   return Array.isArray(data?.pc_list) ? data.pc_list : [];
 };
 
@@ -166,27 +166,9 @@ export const fetchAvailablePcs = async (
 export const createBooking = async (payload: BookingPayload): Promise<BookingResult> =>
   post<BookingResult>('/booking', payload as unknown as Record<string, unknown>);
 
-/** Бронирование с пакетом через официальный iCafeCloud API */
-export const createBookingWithOffer = async (payload: {
-  cafeId: string | number;
-  member_id: string;
-  offer_id: number;
-  pc_name: string;
-  start_date: string;
-  start_time: string;
-  mins: number;
-  comment?: string;
-}): Promise<BookingResult> => {
-  const { cafeId, ...body } = payload;
-  return post<BookingResult>(
-    `/api/v2/cafe/${cafeId}/bookings/action/bookingWithOffer`,
-    body as unknown as Record<string, unknown>,
-  );
-};
-
 // ─── Активные брони ───────────────────────────────────────────────────────────
-export const getActiveBookings = async (memberAccount: string): Promise<ActiveBooking[]> => {
-  const data = await get<unknown>('/all-books-cafes', { memberAccount });
+export const getActiveBookings = async (memberAccount: string, signal?: AbortSignal): Promise<ActiveBooking[]> => {
+  const data = await get<unknown>('/all-books-cafes', { memberAccount }, { timeout: 6000, signal });
 
   const all: ActiveBooking[] = [];
   if (data && typeof data === 'object' && !Array.isArray(data)) {

@@ -47,7 +47,7 @@ const Icon_TwoCoins = ({ color = '#555', size = 48 }: { color?: string; size?: n
 };
 
 const Icon_OneCoin = ({ color = '#555', size = 48 }: { color?: string; size?: number }) => {
-  const active = color === '#FF6B35';
+  const active = color === '#f07346';
   const fill = active ? '#9d9d9d' : '#444';
   const ring = active ? '#2b2b2d' : '#1a1a1a';
   const bg   = active ? '#2b2b2d' : '#111';

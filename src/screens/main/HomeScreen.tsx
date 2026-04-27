@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, RefreshControl, Alert, Image,
@@ -14,7 +14,6 @@ import { getWheelStatus, getStreak } from '../../services/backendService';
 import { WheelCard } from '../../components/home/WheelCard';
 import { FortuneWheelModal } from '../../components/home/FortuneWheelModal';
 import { StreakModal } from '../../components/home/StreakModal';
-import { StreakMeter } from '../../components/home/StreakMeter';
 import type { WheelStatus, SpinResult, StreakInfo } from '../../types/backend';
 import { ArrowRightIcon, ControllerIcon, BookingIcon } from '../../components/ui/Icons';
 import { formatDate, formatTime, getNearestBookingTime } from '../../utils/dateUtils';
@@ -40,13 +39,15 @@ type NavigationProp = ReturnType<typeof useNavigation<any>>;
 export default function HomeScreen() {
   const navigation = useNavigation<NavigationProp>();
   const { user, updateUser, favoriteClubId } = useAuthStore();
-  const { bookings, loadLocalBookings, isInitialLoaded, setIsInitialLoaded } = useBookingStore();
+  const { bookings, loadLocalBookings, isInitialLoaded, setIsInitialLoaded, hasJustBooked, clearJustBookedFlag } = useBookingStore();
 
   const [clubs, setClubs] = useState<Club[]>([]);
   const [rooms, setRooms] = useState<RoomFromApi[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [serverBookings, setServerBookings] = useState<ActiveBooking[]>([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [serverBookingsFailed, setServerBookingsFailed] = useState(false);
+  const serverBookingsFailedRef = useRef(false);
   const [offers, setOffers] = useState<SpecialOffer[]>([]);
   const [offersLoading, setOffersLoading] = useState(false);
 
@@ -55,6 +56,10 @@ export default function HomeScreen() {
   const [wheelModalOpen, setWheelModalOpen] = useState(false);
   const [streakModalOpen, setStreakModalOpen] = useState(false);
   const [streak, setStreak] = useState<StreakInfo | null>(null);
+
+  // AbortController для запроса активных броней —
+  // отменяем при уходе с экрана, чтобы не блокировать iCafeCloud сессию
+  const bookingsAbortRef = useRef<AbortController | null>(null);
 
   // Группируем offers по длительности (макс. 2 пакета, сортировка по возрастанию)
   const { grouped, durations } = useMemo(() => {
@@ -72,23 +77,14 @@ export default function HomeScreen() {
   const hasPkgs = durations.length > 0;
 
   useFocusEffect(useCallback(() => {
-    if (!user?.member_id) return;
-    setWheelLoading(true);
-    Promise.all([
-      getWheelStatus(user.member_id),
-      getStreak(user.member_id),
-    ]).then(([ws, st]) => {
-      setWheelStatus(ws);
-      setStreak(st);
-    }).catch(() => {}).finally(() => setWheelLoading(false));
-
-    // Если вернулись после бронирования — обновляем брони из памяти и с сервера
-    // Читаем через getState() чтобы не добавлять в deps и не создавать цикл
-    if (useBookingStore.getState().recentBooking) {
+    // Обновляем брони только если только что сделали бронь —
+    // не при каждом переключении вкладок
+    if (useBookingStore.getState().hasJustBooked) {
+      clearJustBookedFlag();
       loadLocalBookings();
       setTimeout(() => loadServerBookings(), 500);
     }
-  }, [user?.member_id]));
+  }, []));
 
   const handleSpinDone = (result: SpinResult) => {
     if (user?.member_id) {
@@ -115,6 +111,16 @@ export default function HomeScreen() {
   const loadData = async (showLoader = true, delayMs = 0) => {
     if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
     if (showLoader) setRefreshing(true);
+    serverBookingsFailedRef.current = false;
+    setServerBookingsFailed(false);
+    // Wheel и streak грузим один раз при открытии / pull-to-refresh
+    if (user?.member_id) {
+      setWheelLoading(true);
+      Promise.all([getWheelStatus(user.member_id), getStreak(user.member_id)])
+        .then(([ws, st]) => { setWheelStatus(ws); setStreak(st); })
+        .catch(() => {})
+        .finally(() => setWheelLoading(false));
+    }
     try {
       // Запросы последовательно — чтобы не перегружать iCafeCloud сессию аккаунта
       if (user?.member_id && user?.icafe_id) {
@@ -141,11 +147,32 @@ export default function HomeScreen() {
   const loadServerBookings = async () => {
     const account = user?.member_account || user?.account;
     if (!account) return;
+    if (serverBookingsFailedRef.current) return;
+
+    // Отменяем предыдущий запрос если он ещё висит
+    bookingsAbortRef.current?.abort();
+    const controller = new AbortController();
+    bookingsAbortRef.current = controller;
+
     setBookingsLoading(true);
-    try { setServerBookings(await getActiveBookings(account)); }
-    catch { setServerBookings([]); }
-    finally { setBookingsLoading(false); }
+    try {
+      const result = await getActiveBookings(account, controller.signal);
+      if (!controller.signal.aborted) setServerBookings(result);
+    } catch (e: any) {
+      if (!controller.signal.aborted) {
+        serverBookingsFailedRef.current = true;
+        setServerBookingsFailed(true);
+        setServerBookings([]);
+      }
+    } finally {
+      if (!controller.signal.aborted) setBookingsLoading(false);
+    }
   };
+
+  // Отменяем запрос активных броней при уходе с экрана
+  useEffect(() => {
+    return () => { bookingsAbortRef.current?.abort(); };
+  }, []);
 
   const loadOffers = async (club: Club) => {
     setOffersLoading(true);
@@ -281,15 +308,7 @@ export default function HomeScreen() {
 
             {!offersLoading && (
               <>
-                {/* ── 1. Колесо фортуны ── */}
-                <WheelCard
-                  status={wheelStatus}
-                  loading={wheelLoading && !wheelStatus}
-                  onPress={handleWheelPress}
-                  size={CARD_SIZE}
-                />
-
-                {/* ── 2. Стрик скидок ── */}
+                {/* ── 1. Стрик скидок ── */}
                 {streak !== null && (
                   <TouchableOpacity
                     style={[styles.streakCard, { width: CARD_SIZE, height: CARD_SIZE }]}
@@ -325,7 +344,13 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                 )}
 
-                {/* ── 3. Пакеты ── */}
+                {/* ── 2. Колесо фортуны ── */}
+                <WheelCard
+                  status={wheelStatus}
+                  loading={wheelLoading && !wheelStatus}
+                  onPress={handleWheelPress}
+                  size={CARD_SIZE}
+                />
                 {durations.map(dur => {
                   const zones = grouped[dur];
                   const hours = dur / 60;
@@ -370,13 +395,15 @@ export default function HomeScreen() {
         </View>
 
         {/* ── Активные брони ── */}
-        {(serverBookings.length > 0 || bookingsLoading) && (
+        {(serverBookings.length > 0 || bookingsLoading || serverBookingsFailed) && (
           <>
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>АКТИВНЫЕ БРОНИ</Text>
               {bookingsLoading && <ActivityIndicator size="small" color="#FFCC00" />}
             </View>
-            {serverBookings.map((b, index) => {
+
+            {/* Серверные брони */}
+            {!serverBookingsFailed && serverBookings.map((b, index) => {
               const password = findPassword(b, bookings);
               const zone = getZoneFromBooking(b.product_pc_name, b.product_description, rooms);
               const startStr = b.product_available_date_local_from;
@@ -421,6 +448,38 @@ export default function HomeScreen() {
                 </View>
               );
             })}
+
+            {/* Локальные брони — фолбэк если сервер упал */}
+            {serverBookingsFailed && bookings
+              .filter(b => b.account === currentAccount)
+              .map((b, index) => (
+                <View key={b.pcName + b.startTime} style={styles.activeBookingCard}>
+                  <View style={styles.activeBookingHeader}>
+                    <BookingIcon size={20} color="#FFCC00" />
+                    <Text style={styles.activeBookingTitle}>
+                      {index === 0 ? 'БЛИЖАЙШАЯ БРОНЬ' : 'БРОНЬ'}
+                    </Text>
+                  </View>
+                  <View style={styles.activeBookingContent}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.activeBookingLabel}>Компьютер:</Text>
+                      <Text style={styles.activeBookingValue}>{b.pcName}</Text>
+                      <Text style={[styles.activeBookingLabel, { marginTop: 8 }]}>Начало:</Text>
+                      <Text style={styles.activeBookingValue}>{b.startTime}</Text>
+                    </View>
+                    {b.password && (
+                      <View style={styles.activeBookingCodeWrap}>
+                        <Text style={styles.activeBookingCodeLabel}>КОД ДЛЯ ПК</Text>
+                        <Text style={styles.activeBookingCode}>{b.password}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelPress} activeOpacity={0.8}>
+                    <Text style={styles.cancelBtnText}>Отменить бронь</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            }
           </>
         )}
 

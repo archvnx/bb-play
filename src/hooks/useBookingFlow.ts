@@ -7,7 +7,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ZONE_MAP } from "../constants/config";
 import {
   createBooking,
-  createBookingWithOffer,
   fetchAvailablePcs,
   fetchClubsForBooking,
   fetchMapData,
@@ -15,7 +14,8 @@ import {
   fetchServerPackages,
 } from "../services/bookingService";
 import { handleApiError } from "../services/errorHandler";
-import { saveBookingToHistory } from "../services/backendService";
+import { getZoneLayouts, saveBookingToHistory } from "../services/backendService";
+import type { ZoneLayout } from "../types/backend";
 import { useAuthStore } from "../store/useAuthStore";
 import { useBookingStore } from "../store/useBookingStore";
 import type {
@@ -47,7 +47,7 @@ export function useBookingFlow() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { user } = useAuthStore();
-  const { addBooking } = useBookingStore();
+  const { addBooking, getMapCache, setMapCache, clearMapCache } = useBookingStore();
 
   const dateOptions = buildDateOptions();
   const durationOptions = buildDurationOptions();
@@ -81,6 +81,8 @@ export function useBookingFlow() {
   const [mapData, setMapData] = useState<MapPC[]>([]);
   const [mapAreas, setMapAreas] = useState<MapArea[]>([]);
   const [loadingMap, setLoadingMap] = useState(false);
+  const [mapLoadFailed, setMapLoadFailed] = useState(false);
+  const [zoneLayouts, setZoneLayouts] = useState<ZoneLayout[]>([]);
 
   // ─── Бронирование ─────────────────────────────────────────────────────────
   const [booking, setBooking] = useState(false);
@@ -94,12 +96,6 @@ export function useBookingFlow() {
   const [pendingCafeId, setPendingCafeId] = useState<string | null>(null);
   const [pendingResetStep, setPendingResetStep] = useState<string>("club");
   const [pendingPcName, setPendingPcName] = useState<string | null>(null);
-  /**
-   * product_id пакета, пришедший из роута (напр. с HomeScreen).
-   * Хранится до тех пор, пока не загрузятся serverPackages —
-   * тогда резолвится в selectedDuration.
-   */
-  const [pendingProductId, setPendingProductId] = useState<string | null>(null);
 
   // Инициализация времени и мин из роута
   useEffect(() => {
@@ -140,15 +136,11 @@ export function useBookingFlow() {
       const passedTime = route.params?.time;
       const passedMins = route.params?.mins;
       const passedPcName = route.params?.pcName;
-      const passedProductId = route.params?.productId ?? null;
       const resetStep = route.params?._resetStep ?? "club";
 
       if (passedDate) setDate(passedDate);
       if (passedTime) setTime(passedTime);
       if (passedMins) setMins(passedMins);
-      // Сохраняем product_id — он будет разрешён в selectedDuration
-      // как только загрузятся serverPackages (см. useEffect ниже)
-      setPendingProductId(passedProductId);
 
       if (passedCafeId && clubs.length > 0) {
         const found = clubs.find(
@@ -200,23 +192,74 @@ export function useBookingFlow() {
       .catch((e) =>
         logger.error("useBookingFlow", "fetchServerPackages failed", e),
       );
+
+    // ─── ZoneLayouts: читаем из кеша, грузим только если нет ───────────────
+    const icafeId = String(selectedClub.icafe_id);
+    const cached = getMapCache(icafeId);
+    if (cached) {
+      // Данные уже есть — применяем сразу, без запроса
+      setZoneLayouts(cached.zoneLayouts);
+      setMapData(cached.mapData);
+      setMapAreas(cached.mapAreas);
+      setMapLoadFailed(false);
+    } else {
+      // Кеша нет — загружаем оба источника параллельно
+      Promise.all([
+        getZoneLayouts(icafeId),
+        fetchMapData(icafeId),
+      ])
+        .then(([layouts, { areas, pcs: mapPcs }]) => {
+          setZoneLayouts(layouts);
+          setMapData(mapPcs);
+          setMapAreas(areas);
+          setMapLoadFailed(false);
+          setMapCache(icafeId, {
+            zoneLayouts: layouts,
+            mapData:     mapPcs,
+            mapAreas:    areas,
+          });
+        })
+        .catch((e) => {
+          logger.error("useBookingFlow", "map preload failed", e);
+          setMapLoadFailed(true);
+        });
+    }
   }, [selectedClub, user]);
 
-  const loadMapStructure = useCallback(async () => {
+  // ─── Перезагрузка схемы вручную (по кнопке) ───────────────────────────────
+  const reloadMap = useCallback(async () => {
     if (!selectedClub) return;
+    const icafeId = String(selectedClub.icafe_id);
+    clearMapCache(icafeId);
     setLoadingMap(true);
+    setMapLoadFailed(false);
     try {
-      const { areas, pcs: mapPcs } = await fetchMapData(selectedClub.icafe_id);
-      setMapAreas(areas);
+      const [layouts, { areas, pcs: mapPcs }] = await Promise.all([
+        getZoneLayouts(icafeId),
+        fetchMapData(icafeId),
+      ]);
+      setZoneLayouts(layouts);
       setMapData(mapPcs);
+      setMapAreas(areas);
+      setMapLoadFailed(false);
+      setMapCache(icafeId, {
+        zoneLayouts: layouts,
+        mapData:     mapPcs,
+        mapAreas:    areas,
+      });
     } catch (e) {
-      logger.error("useBookingFlow", "fetchMapData failed", e);
-      setMapData([]);
-      setMapAreas([]);
+      logger.error("useBookingFlow", "reloadMap failed", e);
+      setMapLoadFailed(true);
     } finally {
       setLoadingMap(false);
     }
-  }, [selectedClub]);
+  }, [selectedClub, clearMapCache, setMapCache]);
+
+  // loadMapStructure больше не нужна — данные грузятся при выборе клуба
+  // и кешируются в store. Оставлена для совместимости.
+  const loadMapStructure = useCallback(async () => {
+    await reloadMap();
+  }, [reloadMap]);
 
   const loadPcs = useCallback(async () => {
     if (!selectedClub) return;
@@ -245,14 +288,17 @@ export function useBookingFlow() {
     }
   }, [selectedClub, date, time, mins, selectedDuration, serverPackages]);
 
-  // Загрузка ПК и схемы при переходе на шаг 3
+  // При переходе на шаг pcs — грузим только ПК (схема уже в стейте из кеша)
   useEffect(() => {
     if (step === "pcs") {
       loadPcs();
-      loadMapStructure();
+      // Если схема не загрузилась при выборе клуба — пробуем ещё раз
+      if (zoneLayouts.length === 0 && !loadingMap) {
+        loadMapStructure();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, loadPcs, loadMapStructure]);
+  }, [step]);
 
   // Автовыбор ПК по имени после загрузки
   useEffect(() => {
@@ -266,23 +312,7 @@ export function useBookingFlow() {
     setPendingPcName(null);
   }, [pcs, pendingPcName]);
 
-  // Резолвим pendingProductId → selectedDuration как только пакеты загрузились.
-  // После этого, если мы уже на шаге 'pcs', перезагружаем список ПК с правильным
-  // priceName — это устраняет race condition при переходе с HomeScreen.
-  useEffect(() => {
-    if (!pendingProductId || serverPackages.length === 0) return;
-    const pkg = serverPackages.find((p) => p.id === pendingProductId);
-    if (pkg) {
-      setSelectedDuration(pkg.value);
-      // Если уже на шаге ПК — перезагрузить с правильным priceName
-      if (step === "pcs") loadPcs();
-    }
-    setPendingProductId(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverPackages, pendingProductId, step, loadPcs]);
-
   // ─── Вычисляемые значения ──────────────────────────────────────────────────
-  /** Нормализует название зоны: сначала ищет в ZONE_MAP, иначе приводит к верхнему регистру */
   const normalizeZone = (z: string) => ZONE_MAP[z] ?? z.toUpperCase();
 
   const pcGroups = pcs.reduce<Record<string, PC[]>>((acc, pc) => {
@@ -326,44 +356,17 @@ export function useBookingFlow() {
         mins,
         randKey,
       );
-      // Ищем выбранный пакет с учётом нормализации зоны.
-      // Если строгий поиск (zone + duration) не дал результата — берём любой пакет
-      // с нужным duration, чтобы priceName гарантированно попал в payload.
-      const zone = normalizeZone(selectedPc.pc_area_name);
-      const selectedPkg = selectedDuration
-        ? (serverPackages.find(
-            (p) =>
-              p.value === selectedDuration && normalizeZone(p.zone) === zone,
-          ) ??
-          serverPackages.find((p) => p.value === selectedDuration))
-        : undefined;
-
-      let result: BookingResult;
-      if (selectedPkg) {
-        // Бронирование с пакетом — официальный iCafeCloud эндпоинт
-        result = await createBookingWithOffer({
-          cafeId: selectedClub.icafe_id,
-          member_id: user.member_id,
-          offer_id: Number(selectedPkg.id),
-          pc_name: selectedPc.pc_name,
-          start_date: date,
-          start_time: time,
-          mins,
-        });
-      } else {
-        // Обычное бронирование
-        result = await createBooking({
-          icafe_id: String(selectedClub.icafe_id),
-          pc_name: selectedPc.pc_name,
-          member_account: user.member_account,
-          member_id: user.member_id,
-          start_date: date,
-          start_time: time,
-          mins,
-          rand_key: randKey,
-          key,
-        });
-      }
+      const result = await createBooking({
+        icafe_id: String(selectedClub.icafe_id),
+        pc_name: selectedPc.pc_name,
+        member_account: user.member_account,
+        member_id: user.member_id,
+        start_date: date,
+        start_time: time,
+        mins,
+        rand_key: randKey,
+        key,
+      });
 
       const pwd =
         result?.iCafe_response?.data?.booking_password ||
@@ -464,6 +467,8 @@ export function useBookingFlow() {
     mapData,
     mapAreas,
     loadingMap,
+    mapLoadFailed,
+    zoneLayouts,
     // Бронирование
     booking,
     successData,
@@ -478,6 +483,7 @@ export function useBookingFlow() {
     // Действия
     handleBook,
     loadPcs,
+    reloadMap,
     // Пользователь
     user,
   };

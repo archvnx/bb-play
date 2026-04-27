@@ -26,6 +26,10 @@ const api: AxiosInstance = axios.create({
   },
 });
 
+api.interceptors.request.use(req => {
+  return req;
+});
+
 api.interceptors.response.use(
   (response) => {
     const data = response.data;
@@ -37,6 +41,7 @@ api.interceptors.response.use(
       if (code === API_CODE_VERIFICATION_REQUIRED && data?.member) return data;
       handleApiError(code, data.message);
       return Promise.reject(new Error(data.message || 'API Error'));
+      
     }
 
     return data?.data !== undefined ? data.data : data;

@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator,
+  TextInput, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBookingFlow } from '../../hooks/useBookingFlow';
@@ -23,6 +24,29 @@ export default function BookingScreen() {
     date, time, mins,
     navigation,
   } = flow;
+
+  const [promoCode, setPromoCode] = useState('');
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [promoApplied, setPromoApplied] = useState(false);
+
+  const handlePromoApply = async () => {
+    const code = promoCode.trim();
+    if (!code) return;
+    setPromoLoading(true);
+    try {
+      // TODO: реальная проверка промокода через API
+      await new Promise(r => setTimeout(r, 800)); // имитация запроса
+      setPromoApplied(true);
+      Alert.alert('Сейчас система не работает. Попробуйте позже.');
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+
+  const handlePromoCancel = () => {
+    setPromoCode('');
+    setPromoApplied(false);
+  };
 
   return (
     <SafeAreaView style={st.container} edges={['top']}>
@@ -48,7 +72,11 @@ export default function BookingScreen() {
       {step === 'params' && <BookingParamsStep flow={flow} />}
 
       {step === 'pcs' && (
-        <View style={st.flex}>
+        <KeyboardAvoidingView
+          style={st.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
+        >
           <View style={st.tabBar}>
             <TouchableOpacity style={[st.tab, activeTab === 'list' && st.tabActive]} onPress={() => setActiveTab('list')} activeOpacity={0.8}>
               <ListIcon size={14} color={activeTab === 'list' ? '#000' : '#555'} />
@@ -60,7 +88,7 @@ export default function BookingScreen() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={st.content} contentContainerStyle={{ paddingBottom: selectedPc ? 100 : 40 }}>
+          <ScrollView style={st.content} contentContainerStyle={{ paddingBottom: selectedPc ? 100 : 40 }} keyboardShouldPersistTaps="handled">
             <View style={st.paramsBar}>
               <View style={st.paramChip}><Text style={st.paramChipText}>{date.split('-').reverse().join('.')}</Text></View>
               <View style={st.paramChip}><Text style={st.paramChipText}>{time}</Text></View>
@@ -73,22 +101,56 @@ export default function BookingScreen() {
           </ScrollView>
 
           {selectedPc && (
-            <View style={st.footer}>
-              <View style={st.footerInfo}>
-                <Text style={st.footerPc}>{selectedPc.pc_name}</Text>
-                <Text style={st.footerPrice}>
-                  {estimatedPrice !== undefined ? `${estimatedPrice.toFixed(2)} ₽` : 'Цена уточняется'}
-                </Text>
+            <View style={st.footerWrap}>
+              <View style={st.promoRow}>
+                <TextInput
+                  style={[st.promoInput, promoApplied && st.promoInputApplied]}
+                  placeholder="Промокод"
+                  placeholderTextColor="#444"
+                  value={promoCode}
+                  onChangeText={t => { setPromoCode(t); setPromoApplied(false); }}
+                  autoCapitalize="characters"
+                  editable={!promoApplied}
+                />
+                {promoApplied ? (
+                  <TouchableOpacity
+                    style={[st.promoBtn, st.promoBtnCancel]}
+                    onPress={handlePromoCancel}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={st.promoBtnCancelText}>✕ Отменить</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={st.promoBtn}
+                    onPress={handlePromoApply}
+                    activeOpacity={0.8}
+                    disabled={promoLoading || !promoCode.trim()}
+                  >
+                    {promoLoading
+                      ? <ActivityIndicator color="#000" size="small" />
+                      : <Text style={st.promoBtnText}>Применить</Text>
+                    }
+                  </TouchableOpacity>
+                )}
               </View>
-              <TouchableOpacity style={st.bookBtn} onPress={handleBook} activeOpacity={0.85} disabled={booking}>
-                {booking
-                  ? <ActivityIndicator color="#000" size="small" />
-                  : <><BookingIcon size={18} color="#000" strokeWidth={2.5} /><Text style={st.bookBtnText}>Забронировать</Text></>
-                }
-              </TouchableOpacity>
+              <View style={st.footer}>
+                <View style={st.footerInfo}>
+                  <Text style={st.footerPc}>{selectedPc.pc_name}</Text>
+                  <Text style={st.footerPrice}>
+                    {estimatedPrice !== undefined ? `${estimatedPrice.toFixed(2)} ₽` : 'Цена уточняется'}
+                  </Text>
+                </View>
+                <TouchableOpacity style={st.bookBtn} onPress={handleBook} activeOpacity={0.85} disabled={booking}>
+                  {booking
+                    ? <ActivityIndicator color="#000" size="small" />
+                    : <><BookingIcon size={18} color="#000" strokeWidth={2.5} /><Text style={st.bookBtnText}>Забронировать</Text></>
+                  }
+                </TouchableOpacity>
+              </View>
             </View>
           )}
-        </View>
+        </KeyboardAvoidingView>
       )}
 
       {successData && (
@@ -125,7 +187,16 @@ const st = StyleSheet.create({
   paramChip:        { backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#1A1A1A', paddingHorizontal: 10, paddingVertical: 5 },
   paramChipText:    { color: '#CCC', fontSize: 12, fontWeight: '600' },
   changeParamsText: { color: '#FFCC00', fontSize: 12, fontWeight: '700', textDecorationLine: 'underline' },
-  footer:           { flexDirection: 'row', alignItems: 'center', padding: 16, paddingBottom: 24, backgroundColor: '#000', borderTopWidth: 1, borderTopColor: '#111', gap: 12 },
+  footer:           { flexDirection: 'row', alignItems: 'center', padding: 16, paddingBottom: 24, backgroundColor: '#000', gap: 12 },
+  footerWrap:       { backgroundColor: '#000', borderTopWidth: 1, borderTopColor: '#111' },
+  promoRow:         { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+  promoInput:       { flex: 1, backgroundColor: '#111', borderRadius: 10, borderWidth: 1, borderColor: '#1A1A1A', paddingHorizontal: 12, paddingVertical: 10, color: '#fff', fontSize: 13, fontWeight: '700', letterSpacing: 1 },
+  promoInputApplied:{ borderColor: '#22c55e' },
+  promoBtn:         { backgroundColor: '#1A1A1A', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#333' },
+  promoBtnApplied:  { backgroundColor: '#14532d', borderColor: '#22c55e' },
+  promoBtnCancel:   { backgroundColor: '#1A0A0A', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#EF4444' },
+  promoBtnText:     { color: '#FFCC00', fontSize: 13, fontWeight: '800' },
+  promoBtnCancelText: { color: '#EF4444', fontSize: 13, fontWeight: '800' },
   footerInfo:       { flex: 1 },
   footerPc:         { color: '#fff', fontSize: 16, fontWeight: '900' },
   footerPrice:      { color: '#555', fontSize: 12, marginTop: 2 },
