@@ -11,11 +11,19 @@
       "supportsTablet": true
     },
     "icon": "./assets/logo.png",
-    "splash": {"backgroundColor": "#ffffff"},
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "android": {
+      "package": "com.archvnx.bbplayapp",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.archvnx.bbplayapp"
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#ffffff"
+      }
     },
     "web": {
       "output": "single"
